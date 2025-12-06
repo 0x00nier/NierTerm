@@ -37,3 +37,4 @@ SESSION_SUMMARY.md
 
 # Claude
 .claude
+.claude/settings.local.json
