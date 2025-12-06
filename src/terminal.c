@@ -26,6 +26,99 @@
 static void key_callback(KeyEvent *event, void *userdata);
 static void update_prompt(Terminal *term);
 static void process_output(Terminal *term, const char *data, size_t len);
+static void load_bash_history(Terminal *term);
+static void save_to_bash_history(Terminal *term, const char *command);
+
+// Load bash history from ~/.bash_history
+static void load_bash_history(Terminal *term) {
+    if (!term) return;
+
+    const char *home = getenv("HOME");
+    if (!home) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw) home = pw->pw_dir;
+    }
+    if (!home) {
+        fprintf(stderr, "[WARN] load_bash_history: Could not determine home directory\n");
+        return;
+    }
+
+    char history_path[1024];
+    snprintf(history_path, sizeof(history_path), "%s/.bash_history", home);
+
+    FILE *f = fopen(history_path, "r");
+    if (!f) {
+        fprintf(stderr, "[INFO] load_bash_history: No .bash_history file found at %s\n", history_path);
+        return;
+    }
+
+    char line[4096];
+    int loaded = 0;
+    while (fgets(line, sizeof(line), f) && term->history_count < term->history_capacity) {
+        // Remove trailing newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') {
+            line[len - 1] = '\0';
+            len--;
+        }
+
+        // Skip empty lines
+        if (len == 0) continue;
+
+        // Add to history
+        term->history[term->history_count].command = strdup(line);
+        term->history[term->history_count].length = len;
+        term->history[term->history_count].timestamp = time(NULL);
+        term->history_count++;
+        loaded++;
+    }
+
+    fclose(f);
+    fprintf(stderr, "[INFO] load_bash_history: Loaded %d commands from %s\n", loaded, history_path);
+}
+
+// Save a command to ~/.bash_history
+static void save_to_bash_history(Terminal *term, const char *command) {
+    if (!term || !command) return;
+
+    // Skip empty commands and duplicates
+    size_t len = strlen(command);
+    if (len == 0) return;
+
+    // Check if it's a duplicate of the last command
+    if (term->history_count > 0) {
+        const char *last = term->history[term->history_count - 1].command;
+        if (last && strcmp(last, command) == 0) {
+            return; // Skip duplicate
+        }
+    }
+
+    const char *home = getenv("HOME");
+    if (!home) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw) home = pw->pw_dir;
+    }
+    if (!home) return;
+
+    char history_path[1024];
+    snprintf(history_path, sizeof(history_path), "%s/.bash_history", home);
+
+    // Append to .bash_history
+    FILE *f = fopen(history_path, "a");
+    if (f) {
+        fprintf(f, "%s\n", command);
+        fclose(f);
+        fprintf(stderr, "[DEBUG] save_to_bash_history: Saved '%s' to %s\n", command, history_path);
+    }
+
+    // Add to in-memory history
+    if (term->history_count < term->history_capacity) {
+        term->history[term->history_count].command = strdup(command);
+        term->history[term->history_count].length = len;
+        term->history[term->history_count].timestamp = time(NULL);
+        term->history_count++;
+    }
+}
 
 Terminal *terminal_create(void) {
     fprintf(stderr, "[DEBUG] terminal_create: Starting\n");
@@ -148,7 +241,10 @@ Terminal *terminal_create(void) {
     term->history_capacity = MAX_HISTORY;
     term->history = calloc(term->history_capacity, sizeof(HistoryEntry));
     term->history_count = 0;
-    
+
+    // Load bash history from ~/.bash_history
+    load_bash_history(term);
+
     // Initialize suggestions
     term->suggestions = calloc(MAX_SUGGESTIONS, sizeof(Suggestion));
     term->suggestion_count = 0;
@@ -299,19 +395,23 @@ void terminal_resize(Terminal *term, int rows, int cols) {
 
 Pane *terminal_create_pane(Terminal *term, int row, int col, int rows, int cols) {
     if (!term) return NULL;
-    
+
     Pane *pane = calloc(1, sizeof(Pane));
     if (!pane) return NULL;
-    
+
     pane->buffer = calloc(1, sizeof(Buffer));
     if (!pane->buffer) {
         free(pane);
         return NULL;
     }
-    
+
+    // Allocate scrollback buffer (10000 total lines)
+    int total_rows = 10000;
     pane->buffer->rows = rows;
     pane->buffer->cols = cols;
-    pane->buffer->cells = calloc(rows * cols, sizeof(Cell));
+    pane->buffer->total_rows = total_rows;
+    pane->buffer->scroll_offset = 0;
+    pane->buffer->cells = calloc(total_rows * cols, sizeof(Cell));
     pane->buffer->cursor_visible = true;
     
     pane->row = row;
@@ -432,16 +532,19 @@ static void process_output(Terminal *term, const char *data, size_t len) {
             } else if (c == '\b' || c == 127) {
                 if (buf->cursor_col > 0) {
                     buf->cursor_col--;
-                    // Erase character
-                    int idx = buf->cursor_row * buf->cols + buf->cursor_col;
-                    if (idx >= 0 && idx < buf->rows * buf->cols) {
+                    // Erase character - calculate actual row in total buffer
+                    int actual_row = buf->scroll_offset + buf->cursor_row;
+                    int idx = actual_row * buf->cols + buf->cursor_col;
+                    if (idx >= 0 && idx < buf->total_rows * buf->cols) {
                         buf->cells[idx].ch = ' ';
                     }
                 }
             } else if (c >= 32) {
                 // Printable character - render with current attributes
-                int idx = buf->cursor_row * buf->cols + buf->cursor_col;
-                if (idx >= 0 && idx < buf->rows * buf->cols) {
+                // Calculate actual row in total buffer
+                int actual_row = buf->scroll_offset + buf->cursor_row;
+                int idx = actual_row * buf->cols + buf->cursor_col;
+                if (idx >= 0 && idx < buf->total_rows * buf->cols) {
                     buf->cells[idx].ch = (unsigned char)c;
                     buf->cells[idx].fg_color = parser->inverse ? parser->bg_color : parser->fg_color;
                     buf->cells[idx].bg_color = parser->inverse ? parser->fg_color : parser->bg_color;
@@ -459,20 +562,43 @@ static void process_output(Terminal *term, const char *data, size_t len) {
             buf->cursor_row++;
         }
 
-        // Handle scrolling
+        // Handle scrolling with scrollback buffer
         if (buf->cursor_row >= buf->rows) {
-            // Scroll up
-            memmove(buf->cells, buf->cells + buf->cols, (buf->rows - 1) * buf->cols * sizeof(Cell));
-            // Clear last row
-            for (int j = 0; j < buf->cols; j++) {
-                int idx = (buf->rows - 1) * buf->cols + j;
-                buf->cells[idx].ch = 0;
-                buf->cells[idx].fg_color = parser->fg_color;
-                buf->cells[idx].bg_color = parser->bg_color;
-                buf->cells[idx].bold = false;
-                buf->cells[idx].italic = false;
-                buf->cells[idx].underline = false;
+            // Move scroll_offset down to make room for new content
+            buf->scroll_offset++;
+
+            // If we've hit the end of the scrollback buffer, shift everything up
+            if (buf->scroll_offset + buf->rows > buf->total_rows) {
+                // Shift entire buffer up by one line
+                memmove(buf->cells, buf->cells + buf->cols,
+                        (buf->total_rows - 1) * buf->cols * sizeof(Cell));
+
+                // Clear the last line
+                for (int j = 0; j < buf->cols; j++) {
+                    int idx = (buf->total_rows - 1) * buf->cols + j;
+                    buf->cells[idx].ch = 0;
+                    buf->cells[idx].fg_color = parser->fg_color;
+                    buf->cells[idx].bg_color = parser->bg_color;
+                    buf->cells[idx].bold = false;
+                    buf->cells[idx].italic = false;
+                    buf->cells[idx].underline = false;
+                }
+
+                // Keep scroll_offset at the bottom
+                buf->scroll_offset = buf->total_rows - buf->rows;
             }
+
+            // Clear the new visible bottom line
+            int clear_row = buf->scroll_offset + buf->rows - 1;
+            for (int j = 0; j < buf->cols; j++) {
+                int idx = clear_row * buf->cols + j;
+                if (idx >= 0 && idx < buf->total_rows * buf->cols) {
+                    buf->cells[idx].ch = 0;
+                    buf->cells[idx].fg_color = parser->fg_color;
+                    buf->cells[idx].bg_color = parser->bg_color;
+                }
+            }
+
             buf->cursor_row = buf->rows - 1;
         }
     }
@@ -487,6 +613,24 @@ static void key_callback(KeyEvent *event, void *userdata) {
         extern void renderer_change_font_size(Renderer *renderer, int delta);
         renderer_change_font_size(term->renderer, event->scroll_delta);
         fprintf(stderr, "[DEBUG] Font size changed by %d\n", event->scroll_delta);
+        return;
+    }
+
+    // Handle scrolling without Ctrl
+    if (event->scroll_delta != 0 && !event->ctrl && term->active_pane && term->active_pane->buffer) {
+        Buffer *buf = term->active_pane->buffer;
+
+        // Scroll by 3 lines per wheel tick
+        int scroll_lines = event->scroll_delta * 3;
+        buf->scroll_offset -= scroll_lines; // negative delta scrolls up (shows older content)
+
+        // Clamp scroll_offset
+        int max_scroll = buf->total_rows - buf->rows;
+        if (buf->scroll_offset < 0) buf->scroll_offset = 0;
+        if (buf->scroll_offset > max_scroll) buf->scroll_offset = max_scroll;
+
+        fprintf(stderr, "[DEBUG] Scrolled by %d lines, offset now %d (max %d)\n",
+                scroll_lines, buf->scroll_offset, max_scroll);
         return;
     }
 

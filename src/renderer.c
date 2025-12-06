@@ -202,7 +202,6 @@ void renderer_change_font_size(Renderer *renderer, int delta) {
     // Try to load font at new size
     // For X11 core fonts, we'll try different sizes
     Font font = None;
-    char font_pattern[256];
 
     // Try standard fixed fonts with approximate size
     const char *base_fonts[] = {
@@ -476,19 +475,23 @@ static void render_text_cpu(Renderer *renderer, Buffer *buffer) {
     // Count non-empty cells
     int cell_count = 0;
     int non_empty_count = 0;
-    
-    // Render each character
-    for (int row = 0; row < buffer->rows && row * char_h < renderer->height; row++) {
+
+    // Render each character, starting from scroll_offset
+    for (int visible_row = 0; visible_row < buffer->rows && visible_row * char_h < renderer->height; visible_row++) {
+        // Calculate actual row in the total buffer (including scrollback)
+        int actual_row = buffer->scroll_offset + visible_row;
+        if (actual_row >= buffer->total_rows) break;
+
         for (int col = 0; col < buffer->cols && col * char_w < renderer->width; col++) {
-            int idx = row * buffer->cols + col;
-            if (idx < 0 || idx >= buffer->rows * buffer->cols) continue;
+            int idx = actual_row * buffer->cols + col;
+            if (idx < 0 || idx >= buffer->total_rows * buffer->cols) continue;
 
             cell_count++;
             Cell *cell = &buffer->cells[idx];
 
-            // Calculate position
+            // Calculate position (use visible_row for Y coordinate)
             int x = col * char_w;
-            int y = row * char_h;
+            int y = visible_row * char_h;
 
             // Draw background color
             unsigned long bg = ((cell->bg_color >> 16) & 0xFF) << 16 |

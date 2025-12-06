@@ -31,8 +31,10 @@ typedef struct {
 
 struct Buffer {
     Cell *cells;
-    int rows;
+    int rows;              // Visible rows
     int cols;
+    int total_rows;        // Total rows including scrollback
+    int scroll_offset;     // Current scroll position
     int cursor_row;
     int cursor_col;
     bool cursor_visible;

@@ -98,15 +98,28 @@ int pty_spawn_shell(PTY *pty) {
         }
         
         // Set up terminal attributes
+        // Use RAW mode for proper terminal emulation (required for ble.sh and other advanced shells)
         struct termios tios;
         tcgetattr(slave_fd, &tios);
+
+        // Input flags: disable all processing
         tios.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-        tios.c_oflag &= ~OPOST;
+
+        // Output flags: enable post-processing
+        tios.c_oflag |= OPOST | ONLCR;
+
+        // Local flags: RAW mode - disable canonical, echo, signals
+        // The shell (like ble.sh) will handle echoing
         tios.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+
+        // Control flags: 8-bit chars
         tios.c_cflag &= ~(CSIZE | PARENB);
         tios.c_cflag |= CS8;
+
+        // Set minimum characters and timeout for read
         tios.c_cc[VMIN] = 1;
         tios.c_cc[VTIME] = 0;
+
         tcsetattr(slave_fd, TCSANOW, &tios);
         
         // Redirect stdio to slave
@@ -115,12 +128,20 @@ int pty_spawn_shell(PTY *pty) {
         dup2(slave_fd, STDERR_FILENO);
         
         if (slave_fd > 2) close(slave_fd);
-        
-        // Spawn bash
+
+        // Spawn bash with clean environment (disable ble.sh and other shell enhancements)
         const char *shell = getenv("SHELL");
         if (!shell) shell = "/bin/bash";
-        
-        execl(shell, shell, NULL);
+
+        // Set environment to disable ble.sh and other frameworks
+        setenv("BASH_ENV", "", 1);  // Don't source startup files
+        unsetenv("BLE_VERSION");     // Disable ble.sh
+        unsetenv("BLE_ATTACHED");    // Disable ble.sh
+
+        // Use --norc to skip .bashrc (which likely sources ble.sh)
+        // Use --noprofile to skip profile files
+        // Use -i for interactive mode
+        execl(shell, shell, "--norc", "--noprofile", "-i", NULL);
         _exit(1);
     }
     

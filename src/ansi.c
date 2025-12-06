@@ -296,7 +296,13 @@ bool ansi_process_char(AnsiParser *parser, Buffer *buffer, char c) {
             }
 
         case ANSI_STATE_CSI:
-            if (isdigit(c)) {
+            if (c == '?' || c == '>' || c == '=' || c == '<') {
+                // Private mode indicator - store in intermediate and continue
+                if (parser->intermediate_count < 3) {
+                    parser->intermediate[parser->intermediate_count++] = c;
+                }
+                return false;
+            } else if (isdigit(c)) {
                 parser->state = ANSI_STATE_CSI_PARAM;
                 parser->params[0] = c - '0';
                 parser->param_count = 1;
@@ -314,7 +320,15 @@ bool ansi_process_char(AnsiParser *parser, Buffer *buffer, char c) {
                 }
                 return false;
             } else if (c >= 0x40 && c <= 0x7E) {
-                // Final byte
+                // Final byte - ignore private modes for now
+                if (parser->intermediate_count > 0 &&
+                    (parser->intermediate[0] == '?' || parser->intermediate[0] == '>' ||
+                     parser->intermediate[0] == '=' || parser->intermediate[0] == '<')) {
+                    // Private mode sequence - ignore but consume
+                    parser->state = ANSI_STATE_NORMAL;
+                    return false;
+                }
+                // Handle standard sequences
                 if (c == 'm') {
                     handle_sgr(parser);
                 } else if (c == 'A' || c == 'B' || c == 'C' || c == 'D' ||
