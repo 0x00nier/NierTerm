@@ -1,0 +1,49 @@
+#!/bin/bash
+# NierTerm custom bashrc - prevents ble.sh from loading
+
+# Completely disable ble.sh before sourcing user's bashrc
+export BLE_DISABLE=1
+export DISABLE_BLE=1
+unset BLE_VERSION
+unset BLE_ATTACHED
+
+# Override ble.sh functions to no-op in case it tries to load
+ble-attach() { :; }
+ble-detach() { :; }
+bleopt() { :; }
+
+# Set PS1 before bashrc (in case bashrc doesn't set it)
+export PS1='\u@\h > '
+
+# Source user's actual .bashrc if it exists
+if [[ -f ~/.bashrc ]]; then
+    # Temporarily override 'source' for ble.sh files
+    _original_source=$(declare -f source 2>/dev/null)
+    source() {
+        # Block ble.sh from being sourced
+        if [[ "$1" == *"ble.sh"* ]] || [[ "$1" == *"blesh"* ]]; then
+            echo "[NierTerm] Blocked ble.sh from loading" >&2
+            return 0
+        fi
+        builtin source "$@"
+    }
+
+    . ~/.bashrc
+
+    # Restore original source function
+    if [[ -n "$_original_source" ]]; then
+        eval "$_original_source"
+    else
+        unset -f source
+    fi
+fi
+
+# Force detach ble.sh if it somehow loaded anyway
+if [[ -n "$BLE_VERSION" ]]; then
+    echo "[NierTerm] ble.sh detected - force detaching..." >&2
+    ble-detach 2>/dev/null || true
+    unset BLE_VERSION BLE_ATTACHED
+fi
+
+# Ensure PS1 is set
+export PS1='\u@\h > '

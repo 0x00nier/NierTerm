@@ -1,0 +1,104 @@
+# Enable the subsequent settings only in interactive sessions
+case $- in
+  *i*) ;;
+    *) return;;
+esac
+
+# Path to your oh-my-bash installation.
+export OSH='/home/nier/.oh-my-bash'
+
+# Set name of the theme to load
+OSH_THEME="half-life"
+
+OMB_USE_SUDO=true
+
+# Completions
+completions=(
+  git
+  defaults
+  dirs
+  system
+  ssh
+)
+
+# Aliases
+aliases=(
+  general
+)
+
+# Plugins
+plugins=(
+  git
+  bashmarks
+  bash-preexec
+)
+
+source "$OSH"/oh-my-bash.sh
+
+# All-in-one extraction command
+ex ()
+{
+  if [ -f "$1" ] ; then
+    case $1 in
+      *.tar.bz2)   tar xjf $1   ;;
+      *.tar.gz)    tar xzf $1   ;;
+      *.bz2)       bunzip2 $1   ;;
+      *.rar)       unrar x $1   ;;
+      *.gz)        gunzip $1    ;;
+      *.tar)       tar xf $1    ;;
+      *.tbz2)      tar xjf $1   ;;
+      *.tgz)       tar xzf $1   ;;
+      *.zip)       unzip $1     ;;
+      *.Z)         uncompress $1;;
+      *.7z)        7z x $1      ;;
+      *.deb)       ar x $1      ;;
+      *.tar.xz)    tar xf $1    ;;
+      *.tar.zst)   unzstd $1    ;;
+      *)           echo "'$1' cannot be extracted via ex()" ;;
+    esac
+  else
+    echo "'$1' is not a valid file"
+  fi
+}
+
+# Aliases
+alias ls='exa -al --color=always --group-directories-first'
+alias la='exa -a --color=always --group-directories-first'
+alias ll='exa -l --color=always --group-directories-first'
+alias lt='exa -aT --color=always --group-directories-first'
+alias l.='exa -a | egrep "^\."'
+alias mv='mv -i'
+alias rm='rm -i'
+alias grep='grep --color=auto'
+alias egrep='egrep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias hh='hstr'
+alias cat='batcat --paging=never'
+alias bat='/usr/bin/cat'
+alias q='exit'
+alias pwncat='pwncat-cs'
+alias ..='cd ../'
+alias tun0='ip a | grep tun0 -A 0 | grep inet | cut -d " " -f 6 | cut -d "/" -f 1'
+alias v='lvim'
+
+# PATH additions
+export PATH=$PATH:~/.cargo/bin
+export PATH=$PATH:~/.local/bin
+export PATH=$PATH:/opt
+
+# Setup fzf
+eval "$(fzf --bash)"
+
+# Tab completion
+bind 'TAB: menu-complete'
+bind 'set show-all-if-ambiguous off'
+
+# Unlimited history
+HISTSIZE=
+HISTFILESIZE=
+complete -r
+
+# NierTerm: BLE.SH EXPLICITLY DISABLED - DO NOT UNCOMMENT
+# source ~/.local/share/blesh/ble.sh  # <-- DISABLED FOR NIERTERM
+
+export TERM=xterm-256color

@@ -3,7 +3,9 @@
     "allow": [
       "Bash(make clean:*)",
       "Bash(wsl make:*)",
-      "Bash(wsl make)"
+      "Bash(wsl make)",
+      "Bash(wsl chmod:*)",
+      "Bash(wsl bash -c \"sudo apt-get update && sudo apt-get install -y libxft-dev 2>&1 | tail -20\")"
     ],
     "deny": [],
     "ask": []

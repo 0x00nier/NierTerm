@@ -1,16 +1,8 @@
 # NierTerm
 
-A minimal, high-performance terminal emulator written in pure C.
+A minimal, high-performance terminal emulator written in pure C that's made for me.
+This is not customizable. Any changes to be made will be directly in the source.
 
-## Features
-
-- **Minimal & Fast**: Optimized for speed with GPU rendering (CPU fallback)
-- **Built-in Features**: Autocomplete, autosuggestions, fuzzy finder, tmux-like panes
-- **No Dependencies**: Fully self-contained (uses system libraries only)
-- **Cross-platform**: Linux and macOS support
-- **Modern**: Nerd fonts, ligatures, vim/neovim optimized
-- **Color Scheme**: Moonfly color scheme support (https://github.com/bluz71/vim-moonfly-colors)
-- **SSH Support**: Built-in SSH connection handling
 
 ## Building
 

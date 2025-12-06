@@ -10,6 +10,9 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
+#ifdef HAVE_XFT
+#include <X11/Xft/Xft.h>
+#endif
 #ifdef HAVE_FREETYPE
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -340,63 +343,75 @@ void *renderer_get_window(Renderer *renderer) {
 }
 
 static void init_fonts(Renderer *renderer) {
-    // Default character dimensions - will be updated when font is loaded
-    renderer->char_width = 8;
-    renderer->char_height = 16;
+    // Default character dimensions
+    renderer->char_width = 10;
+    renderer->char_height = 20;
     renderer->font_library = NULL;
     renderer->font_face = NULL;
+    renderer->xft_font = NULL;
+    renderer->xft_draw = NULL;
 
 #ifdef LINUX
-    // Load and cache X11 font
-    if (g_display && g_window) {
-        // Create persistent GC
-        GC gc = XCreateGC(g_display, g_window, 0, NULL);
-        renderer->x11_gc = (void *)gc;
+    if (!g_display || !g_window) return;
 
-        // Try to load a fixed-width font
-        Font font = None;
-        const char *font_names[] = {
-            "fixed",
-            "6x13",
-            "7x13",
-            "8x13",
-            "9x15",
-            "-misc-fixed-medium-r-semicondensed--13-120-75-75-c-60-iso10646-1",
-            NULL
-        };
+    // Create persistent GC
+    GC gc = XCreateGC(g_display, g_window, 0, NULL);
+    renderer->x11_gc = (void *)gc;
 
-        for (int i = 0; font_names[i] && font == None; i++) {
-            font = XLoadFont(g_display, font_names[i]);
-            if (font != None) {
-                fprintf(stderr, "[DEBUG] init_fonts: Loaded font '%s'\n", font_names[i]);
-                break;
-            }
+#ifdef HAVE_XFT
+    // Xft support enabled - load TrueType/Nerd Fonts!
+    fprintf(stderr, "[INFO] Xft enabled - loading Nerd Fonts...\n");
+
+    const char *patterns[] = {
+        "MesloLGS Nerd Font Mono:size=14:antialias=true:hinting=true",
+        "MesloLGS NF:size=14:antialias=true:hinting=true",
+        "JetBrainsMono Nerd Font:size=14:antialias=true:hinting=true",
+        "monospace:size=14:antialias=true",
+        NULL
+    };
+
+    XftFont *xft_font = NULL;
+    for (int i = 0; patterns[i]; i++) {
+        xft_font = XftFontOpenName(g_display, DefaultScreen(g_display), patterns[i]);
+        if (xft_font) {
+            fprintf(stderr, "[SUCCESS] Loaded: %s\n", patterns[i]);
+            break;
         }
+    }
 
-        if (font != None) {
-            renderer->x11_font = (void *)(uintptr_t)font;
-            XSetFont(g_display, gc, font);
+    if (xft_font) {
+        renderer->xft_font = xft_font;
+        renderer->xft_draw = XftDrawCreate(g_display, g_window,
+                                          DefaultVisual(g_display, DefaultScreen(g_display)),
+                                          DefaultColormap(g_display, DefaultScreen(g_display)));
 
-            // Query font metrics
-            XFontStruct *font_struct = XQueryFont(g_display, font);
-            if (font_struct) {
-                renderer->x11_font_struct = (void *)font_struct;
+        XGlyphInfo extents;
+        XftTextExtentsUtf8(g_display, xft_font, (XftChar8 *)"M", 1, &extents);
+        renderer->char_width = extents.xOff;
+        renderer->char_height = xft_font->ascent + xft_font->descent;
+        fprintf(stderr, "[INFO] Font size: %dx%d\n", renderer->char_width, renderer->char_height);
+        return;
+    }
+    fprintf(stderr, "[WARN] No Xft fonts - falling back to bitmap\n");
+#else
+    fprintf(stderr, "[INFO] Xft not available - install libxft-dev and rebuild\n");
+#endif
 
-                int char_w = font_struct->max_bounds.width;
-                int char_h = font_struct->ascent + font_struct->descent;
-
-                if (char_w == 0) {
-                    char_w = font_struct->max_bounds.rbearing - font_struct->min_bounds.lbearing;
-                }
-                if (char_w == 0) char_w = 8;
-
-                renderer->char_width = char_w;
-                renderer->char_height = char_h;
-
-                fprintf(stderr, "[DEBUG] init_fonts: Cached font metrics - w=%d, h=%d\n", char_w, char_h);
-            }
-        } else {
-            fprintf(stderr, "[ERROR] init_fonts: Failed to load any font\n");
+    // Fallback: bitmap fonts
+    Font font = None;
+    const char *names[] = {"10x20", "9x15", "fixed", NULL};
+    for (int i = 0; names[i]; i++) {
+        font = XLoadFont(g_display, names[i]);
+        if (font != None) break;
+    }
+    if (font != None) {
+        renderer->x11_font = (void *)(uintptr_t)font;
+        XSetFont(g_display, gc, font);
+        XFontStruct *fs = XQueryFont(g_display, font);
+        if (fs) {
+            renderer->x11_font_struct = fs;
+            renderer->char_width = fs->max_bounds.width ?: 10;
+            renderer->char_height = fs->ascent + fs->descent;
         }
     }
 #endif

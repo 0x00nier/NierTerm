@@ -23,9 +23,13 @@ struct Renderer {
     int char_height;
 
     // X11 font cache (Linux)
-    void *x11_font;          // Font (X11)
+    void *x11_font;          // Font (X11 core fonts - bitmap)
     void *x11_font_struct;   // XFontStruct* (X11)
     void *x11_gc;            // GC (X11)
+
+    // Xft rendering (Linux - for TrueType/Nerd Fonts)
+    void *xft_font;          // XftFont*
+    void *xft_draw;          // XftDraw*
 
     // Threading
     bool render_thread_running;

@@ -8,14 +8,21 @@ LIBS = -lm
 # GPU rendering (OpenGL)
 GPU_LIBS = -lGL -lGLU
 
-# Font rendering (FreeType) - optional
-# Check if FreeType is available
-HAVE_FREETYPE := $(shell pkg-config --exists freetype2 && echo yes || echo no)
-ifeq ($(HAVE_FREETYPE),yes)
-    CFLAGS += -DHAVE_FREETYPE
-    FONT_LIBS = $(shell pkg-config --libs freetype2)
+# Font rendering (FreeType + Xft) - required for Nerd Fonts
+# Check if Xft is available (includes FreeType)
+HAVE_XFT := $(shell pkg-config --exists xft && echo yes || echo no)
+ifeq ($(HAVE_XFT),yes)
+    CFLAGS += -DHAVE_XFT $(shell pkg-config --cflags xft)
+    FONT_LIBS = $(shell pkg-config --libs xft)
 else
-    FONT_LIBS =
+    # Fallback: try FreeType alone
+    HAVE_FREETYPE := $(shell pkg-config --exists freetype2 && echo yes || echo no)
+    ifeq ($(HAVE_FREETYPE),yes)
+        CFLAGS += -DHAVE_FREETYPE $(shell pkg-config --cflags freetype2)
+        FONT_LIBS = $(shell pkg-config --libs freetype2)
+    else
+        FONT_LIBS =
+    endif
 endif
 
 # Platform detection
