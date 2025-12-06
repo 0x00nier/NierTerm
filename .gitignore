@@ -1,0 +1,25 @@
+# Build artifacts
+obj/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+nierterm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+*.dSYM/
+core
+vgcore.*
+

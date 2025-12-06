@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make clean:*)",
+      "Bash(wsl make:*)",
+      "Bash(wsl make)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
