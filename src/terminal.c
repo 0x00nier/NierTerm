@@ -213,30 +213,8 @@ Terminal *terminal_create(void) {
     term->active_pane = pane;
     term->panes = pane;
 
-    // Initialize buffer with prompt
-    Buffer *buf = pane->buffer;
-    if (buf && term->prompt) {
-        int len = strlen(term->prompt);
-        fprintf(stderr, "[DEBUG] terminal_create: Initializing buffer with prompt '%s' (len=%d)\n", term->prompt, len);
-        fprintf(stderr, "[DEBUG] terminal_create: Buffer size: %dx%d, cursor at (%d,%d)\n", 
-                buf->cols, buf->rows, buf->cursor_col, buf->cursor_row);
-        for (int i = 0; i < len && i < buf->cols; i++) {
-            int idx = buf->cursor_row * buf->cols + buf->cursor_col;
-            if (idx >= 0 && idx < buf->rows * buf->cols) {
-                buf->cells[idx].ch = term->prompt[i];
-                buf->cells[idx].fg_color = DEFAULT_FG_COLOR;
-                buf->cells[idx].bg_color = DEFAULT_BG_COLOR;
-                buf->cells[idx].bold = false;
-                buf->cells[idx].italic = false;
-                buf->cells[idx].underline = false;
-            }
-            buf->cursor_col++;
-        }
-        fprintf(stderr, "[DEBUG] terminal_create: Prompt written, cursor now at (%d,%d)\n", buf->cursor_col, buf->cursor_row);
-    } else {
-        fprintf(stderr, "[WARN] terminal_create: buf=%p, prompt=%p\n", buf, term->prompt);
-    }
-    
+    // Don't add custom prompt - bash will show its own via PS1
+
     // Initialize history
     term->history_capacity = MAX_HISTORY;
     term->history = calloc(term->history_capacity, sizeof(HistoryEntry));
@@ -358,15 +336,52 @@ void terminal_run(Terminal *term) {
                 buffer[n] = '\0';
                 process_output(term, buffer, n);
             } else if (n == 0) {
-                // Shell exited
+                // EOF - shell exited
+                fprintf(stderr, "[INFO] Shell closed (EOF)\n");
+                term->running = false;
                 break;
+            } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                // Real error - shell likely exited
+                fprintf(stderr, "[INFO] Shell closed (error: %s)\n", strerror(errno));
+                term->running = false;
+                break;
+            }
+        }
+
+        // Check if shell process has exited
+        if (term->shell_pid > 0) {
+            int status;
+            pid_t result = waitpid(term->shell_pid, &status, WNOHANG);
+            if (result == term->shell_pid) {
+                // Shell has exited
+                fprintf(stderr, "[INFO] Shell process exited (status=%d)\n", WEXITSTATUS(status));
+                term->running = false;
+                break;
+            } else if (result < 0 && errno != ECHILD) {
+                fprintf(stderr, "[WARN] waitpid error: %s\n", strerror(errno));
             }
         }
         
         renderer_poll_events(term->renderer);
         renderer_draw_buffer(term->renderer, term->active_pane->buffer);
+
+        // Draw text selection highlight if active
+        if (term->has_selection || term->selecting) {
+            renderer_draw_selection(term->renderer,
+                                   term->sel_start_row, term->sel_start_col,
+                                   term->sel_end_row, term->sel_end_col,
+                                   term->active_pane->buffer->scroll_offset);
+        }
+
+        // Draw fuzzy finder overlay if active
+        if (term->fuzzy_finder_active) {
+            renderer_draw_fuzzy_finder(term->renderer, term);
+        }
+
         renderer_swap_buffers(term->renderer);
     }
+
+    fprintf(stderr, "[INFO] terminal_run: Exiting main loop\n");
 }
 
 void terminal_resize(Terminal *term, int rows, int cols) {
@@ -604,9 +619,115 @@ static void process_output(Terminal *term, const char *data, size_t len) {
     }
 }
 
+// Helper function to get selected text from buffer
+static char *get_selected_text(Terminal *term) {
+    if (!term || !term->has_selection || !term->active_pane || !term->active_pane->buffer) {
+        return NULL;
+    }
+
+    Buffer *buf = term->active_pane->buffer;
+    int start_row = term->sel_start_row;
+    int start_col = term->sel_start_col;
+    int end_row = term->sel_end_row;
+    int end_col = term->sel_end_col;
+
+    // Normalize selection (ensure start is before end)
+    if (start_row > end_row || (start_row == end_row && start_col > end_col)) {
+        int tmp = start_row; start_row = end_row; end_row = tmp;
+        tmp = start_col; start_col = end_col; end_col = tmp;
+    }
+
+    // Calculate max size needed
+    int max_size = (end_row - start_row + 1) * (buf->cols + 1) + 1;
+    char *result = malloc(max_size);
+    if (!result) return NULL;
+
+    int pos = 0;
+    for (int row = start_row; row <= end_row; row++) {
+        int col_start = (row == start_row) ? start_col : 0;
+        int col_end = (row == end_row) ? end_col : buf->cols - 1;
+
+        for (int col = col_start; col <= col_end; col++) {
+            int actual_row = buf->scroll_offset + row;
+            int idx = actual_row * buf->cols + col;
+            if (idx >= 0 && idx < buf->total_rows * buf->cols) {
+                char ch = buf->cells[idx].ch;
+                if (ch >= 32 && ch < 127) {
+                    result[pos++] = ch;
+                } else if (ch == 0) {
+                    result[pos++] = ' ';
+                }
+            }
+        }
+        if (row < end_row) {
+            result[pos++] = '\n';
+        }
+    }
+    result[pos] = '\0';
+    return result;
+}
+
 static void key_callback(KeyEvent *event, void *userdata) {
     Terminal *term = (Terminal *)userdata;
     if (!term || !event) return;
+
+    // Handle mouse events for text selection
+    if (event->is_mouse && term->renderer) {
+        int char_w = term->renderer->char_width;
+        int char_h = term->renderer->char_height;
+        if (char_w <= 0) char_w = 10;
+        if (char_h <= 0) char_h = 20;
+
+        // Account for window padding (6 pixels)
+        int mouse_x = event->mouse_x - 6;
+        int mouse_y = event->mouse_y - 6;
+        if (mouse_x < 0) mouse_x = 0;
+        if (mouse_y < 0) mouse_y = 0;
+
+        int col = mouse_x / char_w;
+        int row = mouse_y / char_h;
+
+        // Clamp to buffer bounds
+        if (term->active_pane && term->active_pane->buffer) {
+            Buffer *buf = term->active_pane->buffer;
+            if (col >= buf->cols) col = buf->cols - 1;
+            if (row >= buf->rows) row = buf->rows - 1;
+            if (col < 0) col = 0;
+            if (row < 0) row = 0;
+        }
+
+        if (event->mouse_pressed && event->mouse_button == 1) {
+            // Start selection
+            term->selecting = true;
+            term->has_selection = false;
+            term->sel_start_row = row;
+            term->sel_start_col = col;
+            term->sel_end_row = row;
+            term->sel_end_col = col;
+            fprintf(stderr, "[DEBUG] Selection started at (%d, %d)\n", col, row);
+        } else if (event->mouse_motion && term->selecting) {
+            // Update selection end
+            term->sel_end_row = row;
+            term->sel_end_col = col;
+            term->has_selection = true;
+        } else if (!event->mouse_pressed && event->mouse_button == 1 && term->selecting) {
+            // End selection
+            term->selecting = false;
+            term->sel_end_row = row;
+            term->sel_end_col = col;
+
+            // Check if it's a real selection (not just a click)
+            if (term->sel_start_row != term->sel_end_row || term->sel_start_col != term->sel_end_col) {
+                term->has_selection = true;
+                fprintf(stderr, "[DEBUG] Selection ended: (%d,%d) to (%d,%d)\n",
+                        term->sel_start_col, term->sel_start_row,
+                        term->sel_end_col, term->sel_end_row);
+            } else {
+                term->has_selection = false;
+            }
+        }
+        return;
+    }
 
     // Handle font resizing with Ctrl+scroll
     if (event->scroll_delta != 0 && event->ctrl) {
@@ -648,13 +769,23 @@ static void key_callback(KeyEvent *event, void *userdata) {
 
     // Handle special key combinations
     if (event->ctrl) {
-        if (event->key == 'c') {
-            // Send SIGINT to shell
+        if (event->key == 'c' || event->key == 'C') {
+            if (event->shift && term->has_selection) {
+                // Ctrl+Shift+C: Copy selected text to clipboard
+                char *text = get_selected_text(term);
+                if (text) {
+                    clipboard_set(text);
+                    fprintf(stderr, "[DEBUG] Copied to clipboard: %s\n", text);
+                    free(text);
+                }
+                return;
+            }
+            // Ctrl+C: Send SIGINT to shell
             if (term->shell_pid > 0) {
                 kill(term->shell_pid, SIGINT);
             }
             return;
-        } else if (event->key == 'v') {
+        } else if (event->key == 'v' || event->key == 'V') {
             // Paste from clipboard
             char *clip = clipboard_get();
             if (clip) {
@@ -662,8 +793,8 @@ static void key_callback(KeyEvent *event, void *userdata) {
                 free(clip);
             }
             return;
-        } else if (event->key == 'f') {
-            // Open fuzzy finder
+        } else if (event->key == 'f' || event->key == 'r') {
+            // Open fuzzy finder (Ctrl+F or Ctrl+R like bash)
             fuzzy_start(term);
             return;
         } else if (event->alt) {

@@ -49,5 +49,12 @@ void *renderer_get_display(Renderer *renderer);
 void *renderer_get_window(Renderer *renderer);
 void renderer_change_font_size(Renderer *renderer, int delta);
 
+// Render fuzzy finder overlay (uses void* to avoid circular dependency)
+void renderer_draw_fuzzy_finder(Renderer *renderer, void *term);
+
+// Render text selection highlight
+void renderer_draw_selection(Renderer *renderer, int start_row, int start_col,
+                             int end_row, int end_col, int scroll_offset);
+
 #endif
 

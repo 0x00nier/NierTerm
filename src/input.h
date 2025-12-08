@@ -15,6 +15,14 @@ typedef struct {
     bool is_special;
     int special_key; // Arrow keys, function keys, etc.
     int scroll_delta; // Mouse wheel: positive = up, negative = down
+
+    // Mouse events
+    bool is_mouse;
+    int mouse_button;   // 1=left, 2=middle, 3=right
+    bool mouse_pressed; // true=press, false=release
+    bool mouse_motion;  // true if this is a motion event
+    int mouse_x;
+    int mouse_y;
 } KeyEvent;
 
 typedef void (*KeyCallback)(KeyEvent *event, void *userdata);

@@ -130,24 +130,45 @@ int pty_spawn_shell(PTY *pty) {
         const char *shell = getenv("SHELL");
         if (!shell) shell = "/bin/bash";
 
-        // Get path to our embedded bashrc
-        char cwd_buf[1024];
-        const char *cwd = getcwd(cwd_buf, sizeof(cwd_buf));
-        char rcfile[2048];
-        if (cwd) {
-            snprintf(rcfile, sizeof(rcfile), "%s/default_bashrc", cwd);
-        } else {
-            snprintf(rcfile, sizeof(rcfile), "./default_bashrc");
+        // Get path to executable directory using /proc/self/exe
+        char exe_path[1024] = {0};
+        char rcfile[2048] = {0};
+        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+
+        if (exe_len > 0) {
+            exe_path[exe_len] = '\0';
+            // Find last slash and truncate to get directory
+            char *last_slash = strrchr(exe_path, '/');
+            if (last_slash) {
+                *last_slash = '\0';
+                snprintf(rcfile, sizeof(rcfile), "%s/default_bashrc", exe_path);
+            }
+        }
+
+        // Fallback paths if /proc/self/exe didn't work
+        if (rcfile[0] == '\0') {
+            // Try current working directory
+            char cwd_buf[1024];
+            if (getcwd(cwd_buf, sizeof(cwd_buf))) {
+                snprintf(rcfile, sizeof(rcfile), "%s/default_bashrc", cwd_buf);
+            } else {
+                snprintf(rcfile, sizeof(rcfile), "./default_bashrc");
+            }
         }
 
         // Set TERM for colors
         setenv("TERM", "xterm-256color", 1);
 
-        // Use embedded bashrc without ble.sh
-        execl(shell, shell, "--rcfile", rcfile, "-i", NULL);
+        // Set PS1 with abbreviated path
+        setenv("PS1", "\\[\\033[1;32m\\]\\u@\\h\\[\\033[0m\\]:\\[\\033[1;34m\\]\\W\\[\\033[0m\\]\\$ ", 1);
 
-        // Fallback
-        execl(shell, shell, "--norc", "-i", NULL);
+        // Check if rcfile exists before using it
+        if (access(rcfile, R_OK) == 0) {
+            execl(shell, shell, "--rcfile", rcfile, "-i", NULL);
+        }
+
+        // Fallback - use default bashrc with our PS1
+        execl(shell, shell, "-i", NULL);
         _exit(1);
     }
     

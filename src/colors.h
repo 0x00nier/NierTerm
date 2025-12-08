@@ -4,9 +4,9 @@
 // Moonfly color scheme (from https://github.com/bluz71/vim-moonfly-colors)
 // These will be used for syntax highlighting later
 
-// Background
-#define MOONFLY_BG         0x080808
-#define MOONFLY_BG_ALT     0x1c1c1c
+// Background - pure black for cleaner look
+#define MOONFLY_BG         0x000000
+#define MOONFLY_BG_ALT     0x0a0a0a
 
 // Foreground
 #define MOONFLY_FG         0xb2b2b2

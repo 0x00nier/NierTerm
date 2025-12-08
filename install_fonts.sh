@@ -1,8 +1,48 @@
 #!/bin/bash
-# Font installer for NierTerm - Installs Meslo Nerd Font
+# Setup script for NierTerm - Installs dependencies and fonts
 
 set -e
 
+echo "========================================"
+echo "       NierTerm Setup Script"
+echo "========================================"
+echo
+
+# Detect package manager and install dependencies
+install_deps() {
+    echo "==> Installing build dependencies..."
+
+    if command -v apt &> /dev/null; then
+        # Debian/Ubuntu
+        sudo apt update
+        sudo apt install -y libx11-dev libxft-dev libfreetype6-dev \
+            fontconfig unzip build-essential
+    elif command -v dnf &> /dev/null; then
+        # Fedora
+        sudo dnf install -y libX11-devel libXft-devel freetype-devel \
+            fontconfig unzip gcc make
+    elif command -v pacman &> /dev/null; then
+        # Arch
+        sudo pacman -S --noconfirm libx11 libxft freetype2 \
+            fontconfig unzip base-devel
+    elif command -v zypper &> /dev/null; then
+        # openSUSE
+        sudo zypper install -y libX11-devel libXft-devel freetype2-devel \
+            fontconfig unzip gcc make
+    else
+        echo "Warning: Unknown package manager. Please install manually:"
+        echo "  - libx11-dev (or equivalent)"
+        echo "  - libxft-dev (or equivalent)"
+        echo "  - libfreetype6-dev (or equivalent)"
+        echo "  - fontconfig"
+        echo "  - unzip"
+    fi
+}
+
+# Install dependencies first
+install_deps
+
+echo
 echo "==> Installing Meslo Nerd Font for NierTerm"
 
 # Create fonts directory
@@ -48,4 +88,14 @@ else
 fi
 
 echo
-echo "==> Installation complete! Restart NierTerm to use the new font."
+echo "========================================"
+echo "       Setup Complete!"
+echo "========================================"
+echo
+echo "Now rebuild NierTerm with Xft support:"
+echo "  make clean && make"
+echo
+echo "Then run:"
+echo "  ./nierterm"
+echo
+echo "The terminal should now use Meslo Nerd Font!"

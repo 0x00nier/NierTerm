@@ -3,6 +3,7 @@
 #include "colors.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <ctype.h>
 
 static void handle_sgr(AnsiParser *parser);
@@ -64,6 +65,36 @@ uint32_t ansi_get_color(int color_code, bool bright) {
     }
 }
 
+// Convert 256-color index to RGB
+uint32_t ansi_get_256_color(int idx) {
+    // Colors 0-15: Standard ANSI colors
+    if (idx < 8) {
+        return ansi_get_color(idx, false);
+    } else if (idx < 16) {
+        return ansi_get_color(idx - 8, true);
+    }
+
+    // Colors 16-231: 6x6x6 color cube
+    if (idx >= 16 && idx <= 231) {
+        int n = idx - 16;
+        int r = (n / 36) % 6;
+        int g = (n / 6) % 6;
+        int b = n % 6;
+
+        // Convert 0-5 to 0-255 (0, 95, 135, 175, 215, 255)
+        static const uint8_t cube_values[] = {0, 95, 135, 175, 215, 255};
+        return (cube_values[r] << 16) | (cube_values[g] << 8) | cube_values[b];
+    }
+
+    // Colors 232-255: Grayscale ramp (24 shades)
+    if (idx >= 232 && idx <= 255) {
+        int gray = 8 + (idx - 232) * 10;  // 8 to 238
+        return (gray << 16) | (gray << 8) | gray;
+    }
+
+    return MOONFLY_FG;
+}
+
 static void handle_sgr(AnsiParser *parser) {
     if (!parser) return;
 
@@ -117,21 +148,14 @@ static void handle_sgr(AnsiParser *parser) {
             // 38;5;N or 48;5;N for 256 colors
             // 38;2;R;G;B or 48;2;R;G;B for RGB
             if (i + 2 < parser->param_count && parser->params[i + 1] == 5) {
-                // 256-color mode
+                // 256-color mode - use full palette
                 int color_idx = parser->params[i + 2];
-                // Simple mapping for 256 colors (TODO: implement full palette)
-                if (color_idx < 8) {
-                    uint32_t color = ansi_get_color(color_idx, false);
-                    if (param == 38) parser->fg_color = color;
-                    else parser->bg_color = color;
-                } else if (color_idx >= 8 && color_idx < 16) {
-                    uint32_t color = ansi_get_color(color_idx - 8, true);
-                    if (param == 38) parser->fg_color = color;
-                    else parser->bg_color = color;
-                }
+                uint32_t color = ansi_get_256_color(color_idx);
+                if (param == 38) parser->fg_color = color;
+                else parser->bg_color = color;
                 i += 2;
             } else if (i + 4 < parser->param_count && parser->params[i + 1] == 2) {
-                // RGB mode
+                // RGB mode (24-bit true color)
                 int r = parser->params[i + 2];
                 int g = parser->params[i + 3];
                 int b = parser->params[i + 4];

@@ -103,7 +103,15 @@ typedef struct {
     bool fuzzy_finder_active;
     char *fuzzy_query;
     int fuzzy_selection;
-    
+
+    // Text selection state
+    bool selecting;           // Currently selecting with mouse
+    bool has_selection;       // Has an active selection
+    int sel_start_row;
+    int sel_start_col;
+    int sel_end_row;
+    int sel_end_col;
+
     // Prompt
     char *prompt;
     char *username;

@@ -1,57 +1,53 @@
 #include "clipboard.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #ifdef LINUX
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
-#elif defined(MACOS)
-#include <ApplicationServices/ApplicationServices.h>
 #endif
 
+// Use xclip/xsel for reliable clipboard on Linux
 char *clipboard_get(void) {
 #ifdef LINUX
-    Display *display = XOpenDisplay(NULL);
-    if (!display) return NULL;
-    
-    Window window = XCreateSimpleWindow(display, DefaultRootWindow(display), 0, 0, 1, 1, 0, 0, 0);
-    Atom clipboard = XInternAtom(display, "CLIPBOARD", False);
-    Atom utf8_string = XInternAtom(display, "UTF8_STRING", False);
-    
-    XConvertSelection(display, clipboard, utf8_string, clipboard, window, CurrentTime);
-    XFlush(display);
-    
-    XEvent event;
-    XNextEvent(display, &event);
-    
-    char *result = NULL;
-    if (event.type == SelectionNotify && event.xselection.property != None) {
-        Atom actual_type;
-        int actual_format;
-        unsigned long nitems, bytes_after;
-        unsigned char *data = NULL;
-        
-        XGetWindowProperty(display, window, clipboard, 0, 0, False, AnyPropertyType,
-                          &actual_type, &actual_format, &nitems, &bytes_after, &data);
-        
-        if (data) {
-            XFree(data);
-        }
-        
-        XGetWindowProperty(display, window, clipboard, 0, bytes_after, False, AnyPropertyType,
-                          &actual_type, &actual_format, &nitems, &bytes_after, &data);
-        
-        if (data && nitems > 0) {
-            result = malloc(nitems + 1);
-            memcpy(result, data, nitems);
-            result[nitems] = '\0';
-            XFree(data);
-        }
+    // Try xclip first, then xsel
+    FILE *fp = popen("xclip -selection clipboard -o 2>/dev/null", "r");
+    if (!fp) {
+        fp = popen("xsel --clipboard --output 2>/dev/null", "r");
     }
-    
-    XDestroyWindow(display, window);
-    XCloseDisplay(display);
-    
+    if (!fp) return NULL;
+
+    char *result = NULL;
+    size_t size = 0;
+    size_t capacity = 1024;
+    result = malloc(capacity);
+    if (!result) {
+        pclose(fp);
+        return NULL;
+    }
+
+    int ch;
+    while ((ch = fgetc(fp)) != EOF) {
+        if (size + 1 >= capacity) {
+            capacity *= 2;
+            char *new_result = realloc(result, capacity);
+            if (!new_result) {
+                free(result);
+                pclose(fp);
+                return NULL;
+            }
+            result = new_result;
+        }
+        result[size++] = ch;
+    }
+    result[size] = '\0';
+    pclose(fp);
+
+    if (size == 0) {
+        free(result);
+        return NULL;
+    }
     return result;
     
 #elif defined(MACOS)
@@ -92,21 +88,18 @@ char *clipboard_get(void) {
 
 int clipboard_set(const char *text) {
     if (!text) return -1;
-    
+
 #ifdef LINUX
-    Display *display = XOpenDisplay(NULL);
-    if (!display) return -1;
-    
-    Window window = XCreateSimpleWindow(display, DefaultRootWindow(display), 0, 0, 1, 1, 0, 0, 0);
-    Atom clipboard = XInternAtom(display, "CLIPBOARD", False);
-    
-    XSetSelectionOwner(display, clipboard, window, CurrentTime);
-    XFlush(display);
-    
-    XDestroyWindow(display, window);
-    XCloseDisplay(display);
-    
-    return 0;
+    // Try xclip first, then xsel
+    FILE *fp = popen("xclip -selection clipboard 2>/dev/null", "w");
+    if (!fp) {
+        fp = popen("xsel --clipboard --input 2>/dev/null", "w");
+    }
+    if (!fp) return -1;
+
+    fputs(text, fp);
+    int ret = pclose(fp);
+    return (ret == 0) ? 0 : -1;
     
 #elif defined(MACOS)
     PasteboardRef clipboard;

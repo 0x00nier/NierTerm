@@ -9,6 +9,7 @@
 
 #ifdef LINUX
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/XKBlib.h>
 #elif defined(MACOS)
@@ -112,7 +113,7 @@ static void *input_thread_func(void *arg) {
     fprintf(stderr, "[DEBUG] input_thread_func: window=%lu\n", window);
     
     fprintf(stderr, "[DEBUG] input_thread_func: Selecting input events\n");
-    XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | FocusChangeMask);
+    XSelectInput(display, window, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | FocusChangeMask);
     fprintf(stderr, "[DEBUG] input_thread_func: Entering event loop\n");
 
     XEvent event;
@@ -122,41 +123,65 @@ static void *input_thread_func(void *arg) {
     while (input->running) {
         // Use non-blocking event check
         if (!XPending(display)) {
-            usleep(10000); // Sleep 10ms if no events
+            usleep(1000); // Sleep 1ms if no events (fast response)
             continue;
         }
 
         XNextEvent(display, &event);
         event_count++;
-        if (event_count % 10 == 0) {
-            fprintf(stderr, "[DEBUG] input_thread_func: Processed %d events\n", event_count);
-        }
 
-        if (event.type == ButtonPress) {
+        if (event.type == ButtonPress || event.type == ButtonRelease) {
+            memset(&key_event, 0, sizeof(KeyEvent));
+            key_event.ctrl = (event.xbutton.state & ControlMask) != 0;
+            key_event.alt = (event.xbutton.state & Mod1Mask) != 0;
+            key_event.shift = (event.xbutton.state & ShiftMask) != 0;
+
             // Handle mouse wheel (button 4 = scroll up, button 5 = scroll down)
             if (event.xbutton.button == 4 || event.xbutton.button == 5) {
-                memset(&key_event, 0, sizeof(KeyEvent));
-                key_event.ctrl = (event.xbutton.state & ControlMask) != 0;
-                key_event.alt = (event.xbutton.state & Mod1Mask) != 0;
-                key_event.shift = (event.xbutton.state & ShiftMask) != 0;
                 key_event.scroll_delta = (event.xbutton.button == 4) ? 1 : -1;
-
+                if (input->callback) {
+                    input->callback(&key_event, input->userdata);
+                }
+            } else if (event.xbutton.button == 1) {
+                // Left mouse button - for text selection
+                key_event.is_mouse = true;
+                key_event.mouse_button = 1;
+                key_event.mouse_pressed = (event.type == ButtonPress);
+                key_event.mouse_x = event.xbutton.x;
+                key_event.mouse_y = event.xbutton.y;
+                if (input->callback) {
+                    input->callback(&key_event, input->userdata);
+                }
+            }
+        } else if (event.type == MotionNotify) {
+            // Mouse motion - for drag selection
+            // Only report if button 1 is held
+            if (event.xmotion.state & Button1Mask) {
+                memset(&key_event, 0, sizeof(KeyEvent));
+                key_event.is_mouse = true;
+                key_event.mouse_button = 1;
+                key_event.mouse_motion = true;
+                key_event.mouse_x = event.xmotion.x;
+                key_event.mouse_y = event.xmotion.y;
                 if (input->callback) {
                     input->callback(&key_event, input->userdata);
                 }
             }
         } else if (event.type == KeyPress || event.type == KeyRelease) {
             memset(&key_event, 0, sizeof(KeyEvent));
-            
-            KeySym keysym = XLookupKeysym(&event.xkey, 0);
-            
+
+            // Use XLookupString to properly handle shift and other modifiers
+            char buf[32];
+            KeySym keysym;
+            int len = XLookupString(&event.xkey, buf, sizeof(buf), &keysym, NULL);
+
             // Modifiers
             key_event.ctrl = (event.xkey.state & ControlMask) != 0;
             key_event.alt = (event.xkey.state & Mod1Mask) != 0;
             key_event.shift = (event.xkey.state & ShiftMask) != 0;
             key_event.super = (event.xkey.state & Mod4Mask) != 0;
-            
-            // Special keys
+
+            // Special keys (use keysym for these)
             if (keysym == XK_Up) {
                 key_event.special_key = 1;
                 key_event.is_special = true;
@@ -177,17 +202,12 @@ static void *input_thread_func(void *arg) {
                 key_event.key = '\t';
             } else if (keysym == XK_Escape) {
                 key_event.key = 27;
-            } else if (keysym >= 32 && keysym < 127) {
-                key_event.key = (char)keysym;
-                key_event.unicode = keysym;
-            } else {
-                // Try to get character from keysym
-                if (keysym >= 32 && keysym < 127) {
-                    key_event.unicode = keysym;
-                    key_event.key = (char)keysym;
-                }
+            } else if (len > 0 && buf[0] >= 32 && buf[0] < 127) {
+                // Use the actual character from XLookupString (handles shift!)
+                key_event.key = buf[0];
+                key_event.unicode = (unsigned char)buf[0];
             }
-            
+
             if (event.type == KeyPress && input->callback) {
                 input->callback(&key_event, input->userdata);
             }
